@@ -14,6 +14,18 @@ class TwoCropsTransform:
         k = self.base_transform(x)
         return [q, k]
 
+class MVTwoCropsTransform:
+    """Take two random crops of two images which can be the same image or 
+    come from the different views of the same instance as the query and key."""
+
+    def __init__(self, base_transform):
+        self.base_transform = base_transform
+
+    def __call__(self, x):
+        assert len(x) == 2
+        q = self.base_transform(x[0])
+        k = self.base_transform(x[1])
+        return [q, k]
 
 class GaussianBlur(object):
     """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
