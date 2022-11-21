@@ -3,7 +3,7 @@ import torchvision.transforms as transforms
 import moco.loader
 import os
 
-traindir = './data/imagenet/train'
+traindir = './data/train/'
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                     std=[0.229, 0.224, 0.225])
 
@@ -21,6 +21,12 @@ train_dataset = MVImageDataset(
     traindir,
     moco.loader.MVTwoCropsTransform(transforms.Compose(augmentation)))
 
+files = os.listdir(traindir)
+
+for file in files:
+    f=str(traindir+file)    #使用绝对路径
+    if not os.listdir(f):
+        print(f)
 print(len(os.listdir(traindir)))
 print(len(train_dataset))
 

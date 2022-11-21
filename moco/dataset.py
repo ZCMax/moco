@@ -6,6 +6,29 @@ import random
 
 IMG_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tiff', '.webp')
 
+def find_mv_instances(directory: str) -> Tuple[List[str]]:
+    """Finds the instances folders in a dataset.
+
+    See :class:`DatasetFolder` for details.
+    """
+    sequences = sorted(entry.name for entry in os.scandir(directory) if entry.is_dir())
+    if not sequences:
+        raise FileNotFoundError(f"Couldn't find any instances folder in {directory}.")
+    sequence_dirs = []
+    for sequence in sequences:
+        sequence_dir = os.path.join(directory, sequence)
+        if os.listdir(sequence_dir):
+            sequence_dirs.append(sequence_dir)
+    
+    instance_dirs = []
+    for sequence_dir in sequence_dirs:
+        instances = sorted(entry.name for entry in os.scandir(sequence_dir) if entry.is_dir())
+        for instance in instances:
+            instance_dir = os.path.join(sequence_dir, instance)
+            if os.listdir(instance_dir):
+                instance_dirs.append(instance_dir)
+
+    return instance_dirs
 
 def find_instances(directory: str) -> Tuple[List[str]]:
     """Finds the instances folders in a dataset.
@@ -94,7 +117,7 @@ class MVImageDataset(VisionDataset):
         Returns:
             (Tuple[List[str], Dict[str, int]]): List of all classes and dictionary mapping each class to an index.
         """
-        return find_instances(directory)
+        return find_mv_instances(directory)
 
     def random_choice(self, instance_dir: str) -> Tuple[List[str], Dict[str, int]]:
 

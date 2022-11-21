@@ -7,6 +7,7 @@ import random
 import shutil
 import time
 import warnings
+import logging
 
 import torch
 import torch.nn as nn
@@ -76,12 +77,40 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'N processes per node, which has N GPUs. This is the '
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
+parser.add_argument('--not-save', default=False, action='store_true',
+                        help='If yes, only output log to terminal.')
+parser.add_argument('--work-dir', default='./work_dir',
+                    help='the work folder for storing results')
 
 parser.add_argument('--pretrained', default='', type=str,
                     help='path to moco pretrained checkpoint')
 
 best_acc1 = 0
 
+def loadLogger(args):
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter(fmt="[ %(asctime)s ] %(message)s",
+                                  datefmt="%a %b %d %H:%M:%S %Y")
+
+    sHandler = logging.StreamHandler()
+    sHandler.setFormatter(formatter)
+
+    logger.addHandler(sHandler)
+
+    if not args.not_save:
+        work_dir = os.path.join(args.work_dir,
+                                time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()))
+        if not os.path.exists(work_dir):
+            os.makedirs(work_dir)
+
+        fHandler = logging.FileHandler(work_dir + '/log.txt', mode='w')
+        fHandler.setLevel(logging.DEBUG)
+        fHandler.setFormatter(formatter)
+
+        logger.addHandler(fHandler)
+
+    return logger
 
 def main():
     args = parser.parse_args()
@@ -121,6 +150,7 @@ def main():
 def main_worker(gpu, ngpus_per_node, args):
     global best_acc1
     args.gpu = gpu
+    logger = loadLogger(args)
 
     # suppress printing if not master
     if args.multiprocessing_distributed and args.gpu != 0:
@@ -130,6 +160,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
+        logger.info("Use GPU: {} for training".format(args.gpu))
 
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
@@ -142,6 +173,7 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
+    logger.info("=> creating model '{}'".format(args.arch))
     model = models.__dict__[args.arch]()
 
     # freeze all layers but the last fc
@@ -156,6 +188,7 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.pretrained:
         if os.path.isfile(args.pretrained):
             print("=> loading checkpoint '{}'".format(args.pretrained))
+            logger.info("=> loading checkpoint '{}'".format(args.pretrained))
             checkpoint = torch.load(args.pretrained, map_location="cpu")
 
             # rename moco pre-trained keys
@@ -173,8 +206,10 @@ def main_worker(gpu, ngpus_per_node, args):
             assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
 
             print("=> loaded pre-trained model '{}'".format(args.pretrained))
+            logger.info("=> loaded pre-trained model '{}'".format(args.pretrained))
         else:
             print("=> no checkpoint found at '{}'".format(args.pretrained))
+            logger.info("=> no checkpoint found at '{}'".format(args.pretrained))
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -219,6 +254,7 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.resume:
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
+            logger.info("=> loading checkpoint '{}'".format(args.resume))
             if args.gpu is None:
                 checkpoint = torch.load(args.resume)
             else:
@@ -234,8 +270,11 @@ def main_worker(gpu, ngpus_per_node, args):
             optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
+            logger.info("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume, checkpoint['epoch']))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
+            logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
     cudnn.benchmark = True
 
@@ -283,10 +322,10 @@ def main_worker(gpu, ngpus_per_node, args):
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args)
+        train(train_loader, model, criterion, optimizer, epoch, args, logger)
 
         # evaluate on validation set
-        acc1 = validate(val_loader, model, criterion, args)
+        acc1 = validate(val_loader, model, criterion, args, logger)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -302,10 +341,10 @@ def main_worker(gpu, ngpus_per_node, args):
                 'optimizer' : optimizer.state_dict(),
             }, is_best)
             if epoch == args.start_epoch:
-                sanity_check(model.state_dict(), args.pretrained)
+                sanity_check(model.state_dict(), args.pretrained, logger)
 
 
-def train(train_loader, model, criterion, optimizer, epoch, args):
+def train(train_loader, model, criterion, optimizer, epoch, args, logger):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -354,10 +393,10 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         end = time.time()
 
         if i % args.print_freq == 0:
-            progress.display(i)
+            progress.display(i, logger)
 
 
-def validate(val_loader, model, criterion, args):
+def validate(val_loader, model, criterion, args, logger):
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
@@ -392,10 +431,12 @@ def validate(val_loader, model, criterion, args):
             end = time.time()
 
             if i % args.print_freq == 0:
-                progress.display(i)
+                progress.display(i, logger)
 
         # TODO: this should also be done with the ProgressMeter
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
+              .format(top1=top1, top5=top5))
+        logger.info(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
 
     return top1.avg
@@ -407,12 +448,13 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
         shutil.copyfile(filename, 'model_best.pth.tar')
 
 
-def sanity_check(state_dict, pretrained_weights):
+def sanity_check(state_dict, pretrained_weights, logger):
     """
     Linear classifier should not change any weights other than the linear layer.
     This sanity check asserts nothing wrong happens (e.g., BN stats updated).
     """
     print("=> loading '{}' for sanity check".format(pretrained_weights))
+    logger.info("=> loading '{}' for sanity check".format(pretrained_weights))
     checkpoint = torch.load(pretrained_weights, map_location="cpu")
     state_dict_pre = checkpoint['state_dict']
 
@@ -429,7 +471,7 @@ def sanity_check(state_dict, pretrained_weights):
             '{} is changed in linear classifier training.'.format(k)
 
     print("=> sanity check passed.")
-
+    logger.info("=> sanity check passed.")
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -461,10 +503,11 @@ class ProgressMeter(object):
         self.meters = meters
         self.prefix = prefix
 
-    def display(self, batch):
+    def display(self, batch, logger):
         entries = [self.prefix + self.batch_fmtstr.format(batch)]
         entries += [str(meter) for meter in self.meters]
         print('\t'.join(entries))
+        logger.info('\t'.join(entries))
 
     def _get_batch_fmtstr(self, num_batches):
         num_digits = len(str(num_batches // 1))
@@ -493,7 +536,7 @@ def accuracy(output, target, topk=(1,)):
 
         res = []
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
